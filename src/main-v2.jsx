@@ -177,6 +177,23 @@ const FOG_RECIPES = [
   },
 ];
 
+const REGION_DEMO_OBSERVATIONS = {
+  146: { visibilityMeters: 480, weatherCode: "16", weatherDescription: "안개", observedAt: "학습용 예시 · 06:00" },
+  112: { visibilityMeters: 850, weatherCode: "16", weatherDescription: "안개", observedAt: "학습용 예시 · 03:00" },
+  100: { visibilityMeters: 290, weatherCode: "17", weatherDescription: "낮은안개", observedAt: "학습용 예시 · 06:00" },
+  108: { visibilityMeters: 540, weatherCode: "16", weatherDescription: "안개", observedAt: "학습용 예시 · 06:00" },
+  93: { visibilityMeters: 680, weatherCode: "18", weatherDescription: "땅안개", observedAt: "학습용 예시 · 06:00" },
+};
+
+// 실제 지역 사진을 추가할 때 public/regions에 파일을 넣고 아래 경로만 지정하면 됩니다.
+const REGION_PHOTOS = {
+  jeonju: "",
+  incheon: "",
+  daegwallyeong: "",
+  seoul: "",
+  chuncheon: "",
+};
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -882,6 +899,166 @@ function FogRecipeScene({ recipe, values, score, success }) {
   );
 }
 
+function RepresentativeRegionPanel({ recipe, station }) {
+  const [open, setOpen] = useState(false);
+  const [viewMode, setViewMode] = useState("observed");
+  const [loadingStation, setLoadingStation] = useState(null);
+  const [observations, setObservations] = useState({});
+  const observation = observations[station.code] || null;
+
+  useEffect(() => {
+    setOpen(false);
+    setViewMode("observed");
+  }, [recipe.id]);
+
+  function buildDemoObservation() {
+    const demo = REGION_DEMO_OBSERVATIONS[Number(station.code)];
+    return {
+      ...demo,
+      station: { code: station.code, name: station.name, terrain: station.terrain },
+      visibilityRaw: Math.round(demo.visibilityMeters / 10),
+      fogObserved: true,
+      sourceType: "DEMO_SAMPLE",
+      sourceLabel: "학습용 예시 · 기상청 인증키 연결 전",
+    };
+  }
+
+  async function loadObservation(force = false) {
+    if (!force && observations[station.code]) return;
+    setLoadingStation(station.code);
+
+    try {
+      const response = await fetch(API_BASE + "/api/v1/fog-observations/current?station=" + station.code);
+      if (!response.ok) throw new Error("observation api error");
+      const payload = await response.json();
+      if (!payload.observedAt || !payload.station) throw new Error("observation format error");
+      setObservations((current) => ({ ...current, [station.code]: payload }));
+      setLoadingStation(null);
+      return;
+    } catch (error) {
+      // 실관측 연결 실패 시 화면에서 출처를 명시한 학습용 예시로 전환한다.
+    }
+
+    setObservations((current) => ({ ...current, [station.code]: buildDemoObservation() }));
+    setLoadingStation(null);
+  }
+
+  async function togglePanel() {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen) await loadObservation();
+  }
+
+  const visibilityMeters = Number(observation?.visibilityMeters);
+  const hasVisibility = Number.isFinite(visibilityMeters) && visibilityMeters > 0;
+  const lowVisibility = hasVisibility && visibilityMeters < 1000;
+  const confirmedFog = Boolean(observation?.fogObserved) && lowVisibility;
+  const visualDensity = viewMode === "original" || !hasVisibility
+    ? 0
+    : confirmedFog
+      ? clamp((1300 - visibilityMeters) / 1150, 0.28, 0.92)
+      : lowVisibility
+        ? 0.22
+        : 0.03;
+  const statusClass = !observation || !hasVisibility ? "missing" : confirmedFog ? "fog" : lowVisibility ? "low" : "clear";
+  const statusText = !observation || !hasVisibility
+    ? "자료 확인 중"
+    : confirmedFog
+      ? "현재 안개 관측"
+      : lowVisibility
+        ? "저시정 · 안개 미확인"
+        : "현재 안개 없음";
+
+  return (
+    <section className={"region-observation " + (open ? "open" : "")}>
+      <button
+        aria-expanded={open}
+        className="region-observation-trigger"
+        data-testid={"region-observation-" + station.code}
+        type="button"
+        onClick={togglePanel}
+      >
+        <div>
+          <span>실제 관측으로 연결</span>
+          <strong>{recipe.name} 학습 대표지역 · {station.name}</strong>
+          <small>TM · STN · VS · WW로 현재 관측상태를 확인합니다.</small>
+        </div>
+        <b>{open ? "접기 ↑" : "현재 관측 보기 ↓"}</b>
+      </button>
+
+      {open && (
+        <div className="region-observation-body">
+          <div className={"region-photo " + recipe.id}>
+            {REGION_PHOTOS[station.id] ? (
+              <img className="region-photo-image" src={REGION_PHOTOS[station.id]} alt={station.name + " 대표지역"} />
+            ) : (
+              <div className="region-photo-placeholder">
+                <span>REGION PHOTO</span>
+                <strong>{station.name} 지역 사진 영역</strong>
+                <p>나중에 실제 사진으로 교체할 수 있습니다.</p>
+              </div>
+            )}
+            <div className="region-silhouette"><i /><i /><i /></div>
+            <FogField density={visualDensity} drift={0.72} />
+            <div className="region-photo-caption">
+              <span>{viewMode === "original" ? "원본 사진" : "현재 관측 시정 적용"}</span>
+              <strong>{hasVisibility ? formatVisibility(visibilityMeters) : "자료 없음"}</strong>
+            </div>
+            <div className="region-photo-mode" aria-label="사진 비교 방식">
+              <button className={viewMode === "original" ? "active" : ""} type="button" onClick={() => setViewMode("original")}>원본</button>
+              <button className={viewMode === "observed" ? "active" : ""} type="button" onClick={() => setViewMode("observed")}>관측값 적용</button>
+            </div>
+          </div>
+
+          <aside className="region-observation-data">
+            <div className="region-data-heading">
+              <div>
+                <span>{recipe.name} 학습 대표지역</span>
+                <strong>{station.name} · STN {station.code}</strong>
+              </div>
+              <em className={statusClass}><i />{statusText}</em>
+            </div>
+
+            {loadingStation === station.code ? (
+              <div className="region-loading"><i /> 최신 ASOS 관측자료를 불러오는 중…</div>
+            ) : observation && (
+              <>
+                <div className="region-data-grid">
+                  <div><span>관측시각 TM</span><strong>{observation.observedAt}</strong></div>
+                  <div><span>관측지점 STN</span><strong>{observation.station.code}</strong></div>
+                  <div><span>시정 VS</span><strong>{hasVisibility ? formatVisibility(visibilityMeters) : "결측"}</strong><small>원자료 {observation.visibilityRaw ?? "-"} × 10m</small></div>
+                  <div><span>현재일기 WW</span><strong>{observation.weatherDescription || "관측정보 없음"}</strong><small>코드 {observation.weatherCode || "-"}</small></div>
+                </div>
+
+                <div className={"region-interpretation " + statusClass}>
+                  <span>관측 해석</span>
+                  <strong>{confirmedFog
+                    ? "시정이 1 km 미만이고 WW에서 안개 현상이 확인됐습니다."
+                    : lowVisibility
+                      ? "시정은 1 km 미만이지만 WW에서 안개 현상을 확인하지 못했습니다."
+                      : "현재 관측 시정은 안개 기준인 1 km 이상입니다."}</strong>
+                </div>
+
+                <div className="region-data-actions">
+                  <div>
+                    <span className={observation.sourceType === "KMA_ASOS" ? "live" : "demo"}>
+                      {observation.sourceType === "KMA_ASOS" ? "KMA ASOS 실관측" : "학습용 예시"}
+                    </span>
+                    <small>{observation.sourceLabel}</small>
+                  </div>
+                  <button disabled={loadingStation === station.code} type="button" onClick={() => loadObservation(true)}>새로고침</button>
+                </div>
+              </>
+            )}
+
+            <p className="region-disclaimer">실제 관측값을 지역 사진에 적용한 교육용 시각화입니다. 현재 관측된 안개의 생성 유형을 판별하지는 않습니다.</p>
+          </aside>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function FogRecipeMission({ completedIds, onProgress, onComplete }) {
   const [selectedId, setSelectedId] = useState("radiation");
   const [valuesByType, setValuesByType] = useState(() =>
@@ -894,8 +1071,6 @@ function FogRecipeMission({ completedIds, onProgress, onComplete }) {
     })),
   );
   const [completedTypes, setCompletedTypes] = useState(() => new Set(completedIds));
-  const [airSample, setAirSample] = useState(null);
-  const [sampleLoading, setSampleLoading] = useState(false);
   const recipe = FOG_RECIPES.find((item) => item.id === selectedId);
   const content = STATIONS.find((station) => station.id === recipe.stationId);
   const values = valuesByType[selectedId];
@@ -931,38 +1106,10 @@ function FogRecipeMission({ completedIds, onProgress, onComplete }) {
 
   function resetConditions() {
     setValuesByType((current) => ({ ...current, [selectedId]: { ...recipe.initial } }));
-    setAirSample(null);
-  }
-
-  async function loadAirSample() {
-    setSampleLoading(true);
-    const station = STATIONS.find((item) => item.id === recipe.stationId);
-
-    if (API_BASE) {
-      try {
-        const response = await fetch(API_BASE + "/api/v1/fog-challenges?station=" + station.code);
-        if (!response.ok) throw new Error("sample api error");
-        const payload = await response.json();
-        setAirSample({
-          ...payload.clues,
-          sourceType: payload.sourceType,
-          sourceLabel: payload.sourceLabel,
-        });
-        setSampleLoading(false);
-        return;
-      } catch (error) {
-        // 인증키 또는 백엔드가 없으면 출처를 명시한 데모 샘플로 전환한다.
-      }
-    }
-
-    const demo = buildDemoChallenge(station, 0).question;
-    setAirSample({ ...demo.clues, sourceType: "DEMO_SAMPLE", sourceLabel: "학습용 데모 · API 연결 전" });
-    setSampleLoading(false);
   }
 
   function selectRecipe(id) {
     setSelectedId(id);
-    setAirSample(null);
   }
 
   return (
@@ -1039,20 +1186,6 @@ function FogRecipeMission({ completedIds, onProgress, onComplete }) {
             {success && <p>예상 시정 {formatVisibility(estimatedVisibility)} · {content.clears}</p>}
           </div>
 
-          <div className="air-sample-card">
-            <button disabled={sampleLoading} type="button" onClick={loadAirSample}>
-              {sampleLoading ? "공기 샘플 불러오는 중…" : "ASOS 공기 샘플 비교하기"}
-            </button>
-            {airSample && (
-              <div>
-                <span>{airSample.sourceType === "KMA_ASOS" ? "KMA 실관측" : "학습용 데모"}</span>
-                <strong>TA {Number(airSample.temperature).toFixed(1)}℃ · TD {Number(airSample.dewPoint).toFixed(1)}℃</strong>
-                <p>HM {Math.round(airSample.humidity)}% · WS {Number(airSample.windSpeed).toFixed(1)}m/s</p>
-                <small>{airSample.sourceLabel}</small>
-              </div>
-            )}
-          </div>
-
           <ContinueButton
             disabled={!success}
             onClick={() => onComplete(estimatedVisibility, [...new Set([...completedTypes, recipe.id])])}
@@ -1062,6 +1195,8 @@ function FogRecipeMission({ completedIds, onProgress, onComplete }) {
           </ContinueButton>
         </aside>
       </div>
+
+      <RepresentativeRegionPanel recipe={recipe} station={content} />
     </section>
   );
 }
