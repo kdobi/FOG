@@ -282,7 +282,7 @@ function ObserveMission({ onComplete }) {
       <MissionHeading
         step={STEPS[0]}
         eyebrow="높이와 시정으로 구름·안개 구분하기"
-        title="안개와 구름의 차이 알아보기?"
+        title="안개와 구름의 차이 알아보기"
         description="관측지점의 고도를 올려 구름층에 들어가 보세요. 관측지점이 구름에 닿고 수평시정이 1 km 미만이 되면 그곳에서는 안개로 관측됩니다."
       />
 
@@ -1357,9 +1357,9 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     <section className="mission-page">
       <MissionHeading
         step={STEPS[3]}
-        eyebrow="직접 만든 안개의 예상 시정으로 도로 주행하기"
-        title={formatVisibility(activeVisibility) + " 안개 구간 500m를 완주하세요"}
-        description={visibility ? "3페이지에서 만든 안개의 예상 시정이 게임의 안개 농도와 장애물 발견거리에 적용됩니다." : "아직 만든 안개가 없어 체험용 시정 480m를 적용했습니다."}
+        // eyebrow="직접 만든 안개의 예상 시정으로 도로 주행하기"
+        title={"안개구간! 가시거리의 위험도를 직접 체험하기"}
+        // description={visibility ? "3페이지에서 만든 안개의 예상 시정이 게임의 안개 농도와 장애물 발견거리에 적용됩니다." : "아직 만든 안개가 없어 체험용 시정 480m를 적용했습니다."}
       />
 
       <div className="safety-layout">
