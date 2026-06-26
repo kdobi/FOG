@@ -392,9 +392,9 @@ function ContinueButton({ children, onClick, disabled = false, testId }) {
 }
 
 function ObserveMission({ onComplete }) {
-  const [observerPosition, setObserverPosition] = useState(48);
-  const [cloudHeight, setCloudHeight] = useState(52);
-  const [visibility, setVisibility] = useState(800);
+  const [observerPosition, setObserverPosition] = useState(24);
+  const [cloudHeight, setCloudHeight] = useState(68);
+  const [visibility, setVisibility] = useState(12000);
 
   const observerAltitude = observerPosition;
   const cloudAltitude = cloudHeight;
@@ -1458,12 +1458,14 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
   const [obstacles, setObstacles] = useState([]);
   const [lives, setLives] = useState(3);
   const [won, setWon] = useState(false);
+  const [impact, setImpact] = useState(false);
   const [eventText, setEventText] = useState("시작 버튼을 누르면 안개 구간 주행이 시작됩니다.");
   const laneRef = useRef(1);
   const livesRef = useRef(3);
   const tickRef = useRef(0);
   const obstacleIdRef = useRef(0);
   const hitIdsRef = useRef(new Set());
+  const impactTimerRef = useRef(null);
   const targetDistance = 500;
   const lanePositions = ["22%", "50%", "78%"];
   const fogOpacity = clamp((1400 - activeVisibility) / 1400, 0.05, 0.86);
@@ -1477,6 +1479,19 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
   useEffect(() => {
     livesRef.current = lives;
   }, [lives]);
+
+  useEffect(() => () => {
+    if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current);
+  }, []);
+
+  function triggerImpact() {
+    if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current);
+    setImpact(true);
+    impactTimerRef.current = window.setTimeout(() => {
+      setImpact(false);
+      impactTimerRef.current = null;
+    }, 360);
+  }
 
   useEffect(() => {
     if (!running) return undefined;
@@ -1522,6 +1537,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
 
         if (collisionId !== null) {
           hitIdsRef.current.add(collisionId);
+          triggerImpact();
           setEventText("충돌! 안개에서는 장애물을 더 늦게 발견할 수 있습니다.");
           setLives((currentLives) => {
             const nextLives = Math.max(0, currentLives - 1);
@@ -1568,6 +1584,11 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     tickRef.current = 0;
     obstacleIdRef.current = 0;
     hitIdsRef.current = new Set();
+    setImpact(false);
+    if (impactTimerRef.current) {
+      window.clearTimeout(impactTimerRef.current);
+      impactTimerRef.current = null;
+    }
     setEventText("주행 중입니다. 가까워지는 장애물을 피해 차선을 바꾸세요.");
     setRunning(true);
   }
@@ -1612,7 +1633,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
       />
 
       <div className="safety-layout">
-        <div className={"road-simulator game-road " + (running ? "running" : "")}>
+        <div className={"road-simulator game-road " + (running ? "running " : "") + (impact ? "impact" : "")}>
           <div className="road-sky">
             <div className="road-mountain one" />
             <div className="road-mountain two" />
@@ -1636,6 +1657,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
               <i /><i /><span />
             </div>
           </div>
+          <div className="impact-flash" aria-hidden="true" />
           <FogField density={fogOpacity} drift={0.7} />
           <div className="road-hud">
             <div><span>관측 시정</span><strong>{formatVisibility(activeVisibility)}</strong></div>
