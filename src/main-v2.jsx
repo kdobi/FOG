@@ -209,6 +209,127 @@ function calculateHumidity(temperature, dewPoint) {
   return clamp(Math.round((actual / saturation) * 100), 1, 100);
 }
 
+const VISIBILITY_THRESHOLDS = [
+  { value: 200, label: "200m", caption: "매우 짙음" },
+  { value: 500, label: "500m", caption: "짙은 안개" },
+  { value: 1000, label: "1km", caption: "안개 경계" },
+  { value: 10000, label: "10km", caption: "박무 경계" },
+];
+
+function formatAltitude(altitude) {
+  return Math.round(160 + altitude * 7.6) + "m";
+}
+
+function formatAltitudeDifference(altitudeDifference) {
+  return Math.round(altitudeDifference * 7.6) + "m";
+}
+
+function getVisibilityScalePosition(value) {
+  const min = Math.log10(50);
+  const max = Math.log10(12000);
+  return clamp(((Math.log10(value) - min) / (max - min)) * 100, 0, 100);
+}
+
+function getVisibilityStage(visibility) {
+  if (visibility >= 10000) return { key: "clear", label: "시야 양호", range: "10km 이상" };
+  if (visibility >= 1000) return { key: "mist", label: "박무", range: "1km 이상 ~ 10km 미만" };
+  if (visibility >= 500) return { key: "fog", label: "안개", range: "500m 이상 ~ 1km 미만" };
+  if (visibility >= 200) return { key: "dense", label: "짙은 안개", range: "200m 이상 ~ 500m 미만" };
+  return { key: "very-dense", label: "매우 짙은 안개", range: "50m 이상 ~ 200m 미만" };
+}
+
+function getObservationStatus(observerAltitude, cloudAltitude, visibility) {
+  const distance = Math.abs(observerAltitude - cloudAltitude);
+  const insideCloudLayer = distance <= 12;
+  const nearCloudLayer = distance <= 25;
+
+  if (insideCloudLayer && visibility < 200) {
+    return {
+      key: "very-dense-fog",
+      tone: "red",
+      status: "매우 짙은 안개",
+      description: "관측자가 구름층 안에 있고 수평시정이 200m 미만으로 줄어 매우 짙은 안개 상태입니다.",
+    };
+  }
+
+  if (insideCloudLayer && visibility < 500) {
+    return {
+      key: "dense-fog",
+      tone: "orange",
+      status: "짙은 안개",
+      description: "관측자가 구름층 안에 있고 수평시정이 500m 미만이라 짙은 안개 상태입니다.",
+    };
+  }
+
+  if (insideCloudLayer && visibility < 1000) {
+    return {
+      key: "fog",
+      tone: "amber",
+      status: "안개",
+      description: "관측자가 구름층 안에 있으며 수평시정이 1km 미만이므로 안개 상태입니다.",
+    };
+  }
+
+  if (insideCloudLayer && visibility < 10000) {
+    return {
+      key: "mist",
+      tone: "cyan",
+      status: "박무",
+      description: "관측자가 구름층 안에 있지만 수평시정이 1km 이상 10km 미만이므로 안개보다 약한 박무 상태입니다.",
+    };
+  }
+
+  if (insideCloudLayer && visibility >= 10000) {
+    return {
+      key: "inside-cloud",
+      tone: "blue",
+      status: "구름 속",
+      description: "관측자가 구름층 안에 있지만 수평시정이 길어 시야 흐림은 약합니다.",
+    };
+  }
+
+  if (nearCloudLayer) {
+    return {
+      key: "cloud-edge",
+      tone: "cyan",
+      status: "구름 가장자리",
+      description: "관측자가 구름층 가까이에 있어 주변이 조금 흐려지기 시작합니다.",
+    };
+  }
+
+  if (observerAltitude < cloudAltitude) {
+    return {
+      key: "cloud",
+      tone: "blue",
+      status: "구름",
+      description: "관측자가 구름층 아래에 있어 하늘의 구름으로 관찰합니다.",
+    };
+  }
+
+  return {
+    key: "above-cloud",
+    tone: "green",
+    status: "구름 위",
+    description: "관측자가 구름층보다 높은 곳에 있어 구름을 아래쪽으로 내려다봅니다.",
+  };
+}
+
+function getSceneVisuals(statusKey, visibility) {
+  const lowVisibilityPressure = clamp((1000 - visibility) / 950, 0, 1);
+  const profiles = {
+    cloud: { veil: 0.04, frontVeil: 0, fogDensity: 0.1, farOpacity: 0.95, farBlur: "0px", cloudOpacity: 0.78 },
+    "cloud-edge": { veil: 0.13, frontVeil: 0.02, fogDensity: 0.24, farOpacity: 0.82, farBlur: "1px", cloudOpacity: 0.9 },
+    mist: { veil: 0.21, frontVeil: 0.03, fogDensity: 0.36, farOpacity: 0.68, farBlur: "1.6px", cloudOpacity: 0.92 },
+    fog: { veil: 0.36 + lowVisibilityPressure * 0.08, frontVeil: 0.08, fogDensity: 0.58, farOpacity: 0.42, farBlur: "3px", cloudOpacity: 0.94 },
+    "dense-fog": { veil: 0.56, frontVeil: 0.16, fogDensity: 0.78, farOpacity: 0.18, farBlur: "6px", cloudOpacity: 0.98 },
+    "very-dense-fog": { veil: 0.78, frontVeil: 0.34, fogDensity: 0.96, farOpacity: 0.05, farBlur: "9px", cloudOpacity: 1 },
+    "inside-cloud": { veil: 0.14, frontVeil: 0.02, fogDensity: 0.26, farOpacity: 0.78, farBlur: "1px", cloudOpacity: 0.9 },
+    "above-cloud": { veil: 0.05, frontVeil: 0, fogDensity: 0.12, farOpacity: 0.9, farBlur: "0.4px", cloudOpacity: 0.86 },
+  };
+
+  return profiles[statusKey] || profiles.cloud;
+}
+
 function FogField({ density = 0.25, drift = 1 }) {
   const particles = useMemo(
     () =>
@@ -271,83 +392,211 @@ function ContinueButton({ children, onClick, disabled = false, testId }) {
 }
 
 function ObserveMission({ onComplete }) {
-  const [elevation, setElevation] = useState(18);
-  const visibility = Math.round(clamp(4100 - elevation * 54, 280, 4100));
-  const insideCloud = elevation >= 58;
-  const isFog = insideCloud && visibility < 1000;
-  const status = isFog ? "산안개 관측" : insideCloud ? "구름층 진입" : "구름 관찰";
+  const [observerPosition, setObserverPosition] = useState(48);
+  const [cloudHeight, setCloudHeight] = useState(52);
+  const [visibility, setVisibility] = useState(800);
+
+  const observerAltitude = observerPosition;
+  const cloudAltitude = cloudHeight;
+  const altitudeDifference = Math.abs(observerAltitude - cloudAltitude);
+  const observation = getObservationStatus(observerAltitude, cloudAltitude, visibility);
+  const visibilityStage = getVisibilityStage(visibility);
+  const visual = getSceneVisuals(observation.key, visibility);
+  const observerX = 9 + observerPosition * 0.78;
+  const observerY = 14 + observerAltitude * 0.6;
+  const cloudCenter = 14 + cloudAltitude * 0.6;
+  const visibilityPointer = getVisibilityScalePosition(visibility);
+  const sightDistance = clamp(16 + visibilityPointer * 0.58, 13, 72);
+
+  function applyPreset(nextObserver, nextCloud, nextVisibility) {
+    setObserverPosition(nextObserver);
+    setCloudHeight(nextCloud);
+    setVisibility(nextVisibility);
+  }
 
   return (
-    <section className="mission-page">
+    <section className="mission-page fog-identity-page">
       <MissionHeading
         step={STEPS[0]}
-        eyebrow="높이와 시정으로 구름·안개 구분하기"
-        title="안개와 구름의 차이 알아보기"
-        description="관측지점의 고도를 올려 구름층에 들어가 보세요. 관측지점이 구름에 닿고 수평시정이 1 km 미만이 되면 그곳에서는 안개로 관측됩니다."
+        eyebrow="관측 위치와 수평시정으로 구분하기"
+        title="안개의 정체"
+        description="구름과 안개는 서로 다른 물질이 아니라, 관측자가 어디에서 보느냐에 따라 다르게 느껴지는 같은 현상입니다. 산을 오르며 구름층 안으로 들어가고 수평시정이 1km 미만으로 줄어들면 우리는 그것을 안개로 분류합니다."
       />
 
-      <div className="observe-layout">
-        <div className="observe-scene" style={{ "--elevation": elevation + "%" }}>
-          <div className="sky-glow" />
-          <div className="cloud-band">
-            <span>작은 물방울이 떠 있는 구름층</span>
-          </div>
-          <div className="mountain-back" />
-          <div className="mountain-front" />
-          <div className="observer-platform">
+      <div className="observe-layout fog-identity-layout">
+        <div
+          className={"observe-scene fog-identity-scene is-" + observation.key}
+          style={{
+            "--observer-x": observerX + "%",
+            "--observer-y": observerY + "%",
+            "--cloud-center": cloudCenter + "%",
+            "--sight-distance": sightDistance + "%",
+            "--veil-opacity": visual.veil,
+            "--front-veil-opacity": visual.frontVeil,
+            "--far-opacity": visual.farOpacity,
+            "--far-blur": visual.farBlur,
+            "--cloud-opacity": visual.cloudOpacity,
+          }}
+        >
+          <div className="identity-sky" />
+          <div className="identity-sun" />
+
+          <div className="identity-ridge ridge-far fog-sensitive" />
+          <div className="identity-ridge ridge-mid fog-sensitive" />
+
+          <div className="identity-cloud-layer">
             <i />
-            <span>관측지점</span>
-          </div>
-          <div className="altitude-line">
-            <span>높이</span>
             <i />
-          </div>
-          <FogField density={insideCloud ? 0.78 : 0.2} drift={0.8} />
-          <div className={"scene-result " + (isFog ? "is-fog" : "")}>
-            <small>현재 관측</small>
-            <strong>{status}</strong>
-            <span>수평시정 {formatVisibility(visibility)}</span>
-          </div>
-        </div>
-
-        <aside className="mission-controls">
-          <div className="control-intro">
-            <span>직접 조작</span>
-            <strong>관측지점 고도</strong>
-            <p>화면 크기가 아니라 관측지점의 높이와 실제 시정값으로 현상을 구분합니다.</p>
+            <i />
+            <span>작은 물방울·얼음 방울이 떠 있는 구름층</span>
           </div>
 
-          <label className="big-range">
-            <div><span>낮은 평지</span><strong>{elevation}%</strong><span>산 정상</span></div>
-            <input
-              aria-label="관측지점 고도"
-              max="78"
-              min="0"
-              type="range"
-              value={elevation}
-              onChange={(event) => setElevation(Number(event.target.value))}
-            />
-          </label>
-
-          <div className="preset-row">
-            <button type="button" onClick={() => setElevation(18)}>평지</button>
-            <button type="button" onClick={() => setElevation(48)}>산 중턱</button>
-            <button type="button" onClick={() => setElevation(68)}>구름 속</button>
-          </div>
-
-          <div className={"discovery-card " + (isFog ? "discovered" : "")}>
-            <div className="discovery-icon">{isFog ? "✓" : "?"}</div>
-            <div>
-              <span>{isFog ? "원리 발견" : "탐구 중"}</span>
-              <strong>{isFog ? "지표와 맞닿은 구름 + 시정 1 km 미만 = 안개" : "구름 속까지 관측지점을 올려보세요"}</strong>
+          <div className="identity-mountain">
+            <div className="identity-slope-fill" />
+            <div className="identity-trail" />
+            <div className="tree-row tree-row-back fog-sensitive">
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="tree-row tree-row-front">
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="trail-sign">
+              <b>1km</b>
+              <span>안개 경계</span>
             </div>
           </div>
 
-          <div className="definition-card">
-            <span>KMA 기준</span>
-            <p>“극히 작은 물방울들이 대기 중에 떠 있어 수평시정이 1 km 미만인 현상”</p>
-            <div><i style={{ width: clamp((visibility / 4000) * 100, 4, 100) + "%" }} /></div>
-            <small>현재 {formatVisibility(visibility)} · 기준선 1 km</small>
+          <div className="altitude-ruler" aria-hidden="true">
+            <span>고도</span>
+            <i className="cloud-marker" />
+            <i className="observer-marker" />
+          </div>
+
+          <div className="sight-beam" aria-hidden="true">
+            <i />
+            <span>{formatVisibility(visibility)}</span>
+          </div>
+
+          <div className="observer-hiker">
+            <i className="hiker-shadow" />
+            <i className="hiker-body" />
+            <i className="hiker-pack" />
+            <i className="hiker-head" />
+            <strong>관측자</strong>
+          </div>
+
+          <FogField density={visual.fogDensity} drift={0.82} />
+          <div className="visibility-veil" />
+          <div className="front-whiteout" />
+
+          <div className={"scene-result status-" + observation.tone}>
+            <small>현재 상태</small>
+            <strong>{observation.status}</strong>
+            <span>{observation.description}</span>
+          </div>
+
+          <div className="scene-metrics" aria-label="현재 장면 수치">
+            <div><span>관측자 고도</span><strong>{formatAltitude(observerAltitude)}</strong></div>
+            <div><span>구름층 고도</span><strong>{formatAltitude(cloudAltitude)}</strong></div>
+            <div><span>고도 차이</span><strong>{formatAltitudeDifference(altitudeDifference)}</strong></div>
+            <div><span>수평시정</span><strong>{formatVisibility(visibility)}</strong></div>
+            <div><span>현재 상태</span><strong>{observation.status}</strong></div>
+          </div>
+        </div>
+
+        <aside className="mission-controls observe-controls">
+          <div className="control-intro">
+            <span>직접 조작</span>
+            <strong>산길·구름층·시정</strong>
+            <p>관측자를 산길 위로 올리고 구름층 높이와 수평시정을 바꾸며 같은 물방울층이 구름, 박무, 안개로 달라지는 순간을 확인하세요.</p>
+          </div>
+
+          <label className="sim-slider">
+            <div><span>관측자 등산 위치</span><strong>{formatAltitude(observerAltitude)}</strong></div>
+            <input
+              aria-label="관측자 등산 위치"
+              max="100"
+              min="0"
+              step="1"
+              type="range"
+              value={observerPosition}
+              onChange={(event) => setObserverPosition(Number(event.target.value))}
+            />
+            <div className="slider-endpoints"><span>산 아래</span><span>산 위</span></div>
+          </label>
+
+          <label className="sim-slider">
+            <div><span>구름층 높이</span><strong>{formatAltitude(cloudAltitude)}</strong></div>
+            <input
+              aria-label="구름층 높이"
+              max="100"
+              min="0"
+              step="1"
+              type="range"
+              value={cloudHeight}
+              onChange={(event) => setCloudHeight(Number(event.target.value))}
+            />
+            <div className="slider-endpoints"><span>지표 가까이</span><span>하늘 위쪽</span></div>
+          </label>
+
+          <label className="sim-slider visibility-slider">
+            <div><span>수평시정</span><strong>{formatVisibility(visibility)}</strong></div>
+            <input
+              aria-label="수평시정"
+              max="12000"
+              min="50"
+              step="50"
+              type="range"
+              value={visibility}
+              onChange={(event) => setVisibility(Number(event.target.value))}
+            />
+            <div className="visibility-scale">
+              <i className="visibility-current" style={{ left: visibilityPointer + "%" }} />
+              {VISIBILITY_THRESHOLDS.map((threshold) => (
+                <span
+                  className={"visibility-threshold threshold-" + threshold.value}
+                  key={threshold.value}
+                  style={{ left: getVisibilityScalePosition(threshold.value) + "%" }}
+                >
+                  <b>{threshold.label}</b>
+                  <em>{threshold.caption}</em>
+                </span>
+              ))}
+            </div>
+            <div className={"visibility-stage stage-" + visibilityStage.key}>
+              <span>수평시정 단계</span>
+              <strong>{visibilityStage.label}</strong>
+              <small>{visibilityStage.range}</small>
+            </div>
+          </label>
+
+          <div className="preset-row fog-preset-row">
+            <button type="button" onClick={() => applyPreset(24, 68, 12000)}>구름</button>
+            <button type="button" onClick={() => applyPreset(44, 66, 7600)}>가장자리</button>
+            <button type="button" onClick={() => applyPreset(54, 52, 11000)}>구름 속</button>
+            <button type="button" onClick={() => applyPreset(54, 52, 4200)}>박무</button>
+            <button type="button" onClick={() => applyPreset(54, 52, 800)}>안개</button>
+            <button type="button" onClick={() => applyPreset(54, 52, 320)}>짙은 안개</button>
+            <button type="button" onClick={() => applyPreset(54, 52, 120)}>매우 짙은</button>
+            <button type="button" onClick={() => applyPreset(76, 45, 9000)}>구름 위</button>
+          </div>
+
+          <div className={"status-explanation status-" + observation.tone}>
+            <span>상태 판정</span>
+            <strong>{observation.status}</strong>
+            <p>{observation.description}</p>
+          </div>
+
+          <div className="mist-note">
+            <span>박무 기준</span>
+            <p>박무는 안개보다 옅은 시야 흐림입니다. 보통 수평시정이 1km 이상 10km 미만일 때 박무로 분류하고, 1km 미만이면 안개로 분류합니다.</p>
           </div>
 
           <ContinueButton onClick={onComplete} testId="complete-observe">
@@ -1357,7 +1606,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     <section className="mission-page">
       <MissionHeading
         step={STEPS[3]}
-        // eyebrow="직접 만든 안개의 예상 시정으로 도로 주행하기"
+        eyebrow="도로 주행하기"
         title={"안개구간!  가시거리의 위험도를 직접 체험하기"}
          description={visibility ? "" : "가시거리가 줄어들고 시야가 제한됩니다"}
       />
