@@ -282,7 +282,7 @@ function ObserveMission({ onComplete }) {
       <MissionHeading
         step={STEPS[0]}
         eyebrow="높이와 시정으로 구름·안개 구분하기"
-        title="구름이 산과 만나면 무엇이 될까요?"
+        title="안개와 구름의 차이 알아보기?"
         description="관측지점의 고도를 올려 구름층에 들어가 보세요. 관측지점이 구름에 닿고 수평시정이 1 km 미만이 되면 그곳에서는 안개로 관측됩니다."
       />
 
@@ -1117,7 +1117,7 @@ function FogRecipeMission({ completedIds, onProgress, onComplete }) {
       <MissionHeading
         step={STEPS[2]}
         eyebrow="조건을 움직여 다섯 안개 직접 만들기"
-        title="어떤 조건에서 어떤 안개가 만들어질까요?"
+        title="상황에 따른 안개의 5가지 종류"
         description="지역을 외우는 대신 공기 이동·지면과 수면 상태·수증기 공급을 직접 조절합니다. 2페이지의 공통 응결 원리가 다섯 가지 생성 방식으로 어떻게 달라지는지 확인하세요."
       />
 
