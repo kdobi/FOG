@@ -1358,8 +1358,8 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
       <MissionHeading
         step={STEPS[3]}
         // eyebrow="직접 만든 안개의 예상 시정으로 도로 주행하기"
-        title={"안개구간! 가시거리의 위험도를 직접 체험하기"}
-        // description={visibility ? "3페이지에서 만든 안개의 예상 시정이 게임의 안개 농도와 장애물 발견거리에 적용됩니다." : "아직 만든 안개가 없어 체험용 시정 480m를 적용했습니다."}
+        title={"안개구간!  가시거리의 위험도를 직접 체험하기"}
+         description={visibility ? "" : "가시거리가 줄어들고 시야가 제한됩니다"}
       />
 
       <div className="safety-layout">
