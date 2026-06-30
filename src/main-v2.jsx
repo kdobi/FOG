@@ -1459,18 +1459,68 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
   const [lives, setLives] = useState(3);
   const [won, setWon] = useState(false);
   const [impact, setImpact] = useState(false);
+  const [steering, setSteering] = useState("");
+  const [viewMode, setViewMode] = useState("first");
   const [eventText, setEventText] = useState("시작 버튼을 누르면 안개 구간 주행이 시작됩니다.");
   const laneRef = useRef(1);
   const livesRef = useRef(3);
   const tickRef = useRef(0);
   const obstacleIdRef = useRef(0);
   const hitIdsRef = useRef(new Set());
+  const passedIdsRef = useRef(new Set());
   const impactTimerRef = useRef(null);
+  const steeringTimerRef = useRef(null);
   const targetDistance = 500;
   const lanePositions = ["22%", "50%", "78%"];
-  const fogOpacity = clamp((1400 - activeVisibility) / 1400, 0.05, 0.86);
-  const revealStart = activeVisibility < 200 ? 70 : activeVisibility < 500 ? 55 : activeVisibility < 1000 ? 38 : 12;
+  const visibilityPressure = clamp((1600 - activeVisibility) / 1250, 0, 1);
+  const fogOpacity = clamp((1900 - activeVisibility) / 1250, 0.28, 0.98);
+  const thirdPersonFogOpacity = clamp((1700 - activeVisibility) / 1500, 0.16, 0.94);
+  const revealStart = activeVisibility < 200 ? 76 : activeVisibility < 500 ? 64 : activeVisibility < 1000 ? 45 : 16;
+  const firstPersonRevealStart = Math.max(8, revealStart - 23);
+  const recommendedSpeed = activeVisibility < 500 ? 30 : activeVisibility < 1000 ? 40 : 60;
+  const reactionLabel = activeVisibility < 500 ? "매우 짧음" : activeVisibility < 1000 ? "짧음" : "보통";
+  const riskLabel = activeVisibility < 500 ? "위험" : activeVisibility < 1000 ? "주의" : "보통";
+  const laneShift = (1 - lane) * 14;
+  const wheelTurn = (lane - 1) * 18;
+  const laneOpacity = clamp(0.72 - visibilityPressure * 0.52, 0.18, 0.72);
+  const laneBlur = 0.4 + visibilityPressure * 1.8;
+  const fogBlur = 10 + visibilityPressure * 18;
+  const farFogOpacity = clamp(0.42 + visibilityPressure * 0.38, 0.42, 0.8);
+  const nearFogOpacity = clamp(0.34 + visibilityPressure * 0.36, 0.34, 0.7);
+  const roadFogOpacity = clamp(0.3 + visibilityPressure * 0.34, 0.3, 0.64);
   const gameScore = Math.round((lives / 3) * 100);
+
+  function getLanePosition(laneIndex, y) {
+    const depth = clamp((y + 12) / 112, 0.08, 1);
+    const spread = 7 + Math.pow(depth, 0.74) * 22;
+    return 50 + (laneIndex - 1) * spread;
+  }
+
+  function getObstacleVisual(obstacle) {
+    const depth = clamp((obstacle.y + 12) / 112, 0, 1);
+    const opacity = clamp(((obstacle.y - firstPersonRevealStart) / (100 - firstPersonRevealStart)) * 1.55, 0.01, 1);
+    const blur = clamp((1 - depth) * 15 * visibilityPressure, 0, 14);
+    const scale = clamp(0.18 + depth * 1.38, 0.18, 1.48);
+    const brightness = clamp(0.46 + depth * 0.7, 0.46, 1.12);
+    const contrast = clamp(0.58 + depth * 0.42, 0.58, 1);
+
+    return {
+      left: getLanePosition(obstacle.lane, obstacle.y) + "%",
+      top: clamp(23 + obstacle.y * 0.72, 13, 96) + "%",
+      opacity,
+      filter: "blur(" + blur.toFixed(2) + "px) brightness(" + brightness.toFixed(2) + ") contrast(" + contrast.toFixed(2) + ")",
+      transform: "translate(-50%, -50%) scale(" + scale.toFixed(2) + ")",
+    };
+  }
+
+  function getThirdPersonObstacleVisual(obstacle) {
+    return {
+      left: lanePositions[obstacle.lane],
+      top: obstacle.y + "%",
+      opacity: clamp(((obstacle.y - revealStart) / (100 - revealStart)) * 1.35, 0.02, 1),
+      transform: "translate(-50%, -50%) scale(" + clamp(0.38 + obstacle.y / 135, 0.35, 1.08) + ")",
+    };
+  }
 
   useEffect(() => {
     laneRef.current = lane;
@@ -1482,6 +1532,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
 
   useEffect(() => () => {
     if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current);
+    if (steeringTimerRef.current) window.clearTimeout(steeringTimerRef.current);
   }, []);
 
   function triggerImpact() {
@@ -1493,14 +1544,38 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     }, 360);
   }
 
+  function triggerSteering(direction) {
+    if (steeringTimerRef.current) window.clearTimeout(steeringTimerRef.current);
+    setSteering(direction < 0 ? "left" : "right");
+    steeringTimerRef.current = window.setTimeout(() => {
+      setSteering("");
+      steeringTimerRef.current = null;
+    }, 260);
+  }
+
+  function changeLane(direction) {
+    if (!running) return;
+    setLane((current) => {
+      const next = clamp(current + direction, 0, 2);
+      if (next !== current) {
+        triggerSteering(direction);
+        setEventText(direction < 0 ? "왼쪽 차선으로 이동했습니다. 전방 시야를 다시 확인하세요." : "오른쪽 차선으로 이동했습니다. 전방 시야를 다시 확인하세요.");
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (!running) return undefined;
+    const distanceStep = viewMode === "third" ? 4 : 1.33;
+    const obstacleSpawnEvery = viewMode === "third" ? 18 : 24;
+    const obstacleStep = viewMode === "third" ? 3.6 : 3.4;
 
     const timer = window.setInterval(() => {
       tickRef.current += 1;
 
       setDistance((current) => {
-        const next = Math.min(targetDistance, current + 4);
+        const next = Math.min(targetDistance, current + distanceStep);
         if (next >= targetDistance) {
           setRunning(false);
           setWon(true);
@@ -1509,7 +1584,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
         return next;
       });
 
-      if (tickRef.current % 18 === 0) {
+      if (tickRef.current % obstacleSpawnEvery === 0) {
         const nextId = obstacleIdRef.current + 1;
         obstacleIdRef.current = nextId;
         setObstacles((current) => [
@@ -1521,7 +1596,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
       setObstacles((current) => {
         let collisionId = null;
         const moved = current
-          .map((item) => ({ ...item, y: item.y + 3.6 }))
+          .map((item) => ({ ...item, y: item.y + obstacleStep }))
           .filter((item) => item.y < 112);
 
         moved.forEach((item) => {
@@ -1532,6 +1607,16 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
             && !hitIdsRef.current.has(item.id)
           ) {
             collisionId = item.id;
+          }
+
+          if (
+            item.lane !== laneRef.current
+            && item.y >= 88
+            && item.y <= 96
+            && !passedIdsRef.current.has(item.id)
+          ) {
+            passedIdsRef.current.add(item.id);
+            setEventText("위험 회피! 안개 구간에서는 여유 있는 판단이 중요합니다.");
           }
         });
 
@@ -1554,18 +1639,18 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     }, 60);
 
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [running, viewMode]);
 
   useEffect(() => {
     function handleKeyDown(event) {
       if (!running) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        setLane((current) => Math.max(0, current - 1));
+        changeLane(-1);
       }
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        setLane((current) => Math.min(2, current + 1));
+        changeLane(1);
       }
     }
 
@@ -1581,21 +1666,26 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
     setLives(3);
     livesRef.current = 3;
     setWon(false);
+    setSteering("");
     tickRef.current = 0;
     obstacleIdRef.current = 0;
     hitIdsRef.current = new Set();
+    passedIdsRef.current = new Set();
     setImpact(false);
     if (impactTimerRef.current) {
       window.clearTimeout(impactTimerRef.current);
       impactTimerRef.current = null;
+    }
+    if (steeringTimerRef.current) {
+      window.clearTimeout(steeringTimerRef.current);
+      steeringTimerRef.current = null;
     }
     setEventText("주행 중입니다. 가까워지는 장애물을 피해 차선을 바꾸세요.");
     setRunning(true);
   }
 
   function moveLane(direction) {
-    if (!running) return;
-    setLane((current) => clamp(current + direction, 0, 2));
+    changeLane(direction);
   }
 
   if (finished) {
@@ -1633,61 +1723,165 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
       />
 
       <div className="safety-layout">
-        <div className={"road-simulator game-road " + (running ? "running " : "") + (impact ? "impact" : "")}>
-          <div className="road-sky">
-            <div className="road-mountain one" />
-            <div className="road-mountain two" />
-          </div>
-          <div className="road-surface game-surface">
-            <i className="lane-line left" />
-            <i className="lane-line right" />
-            {obstacles.map((obstacle) => (
-              <div
-                className={"road-obstacle " + obstacle.type}
-                key={obstacle.id}
-                style={{
-                  left: lanePositions[obstacle.lane],
-                  top: obstacle.y + "%",
-                  opacity: clamp(((obstacle.y - revealStart) / (100 - revealStart)) * 1.6, 0.04, 1),
-                  transform: "translate(-50%, -50%) scale(" + clamp(0.38 + obstacle.y / 135, 0.35, 1.08) + ")",
-                }}
-              ><i /><i /></div>
-            ))}
-            <div className="game-car" style={{ left: lanePositions[lane] }}>
-              <i /><i /><span />
+        {viewMode === "first" ? (
+          <div
+            className={"road-simulator game-road first-person-game lane-" + lane + " " + (running ? "running " : "") + (impact ? "impact " : "") + (steering ? "steering steering-" + steering : "")}
+            style={{
+              "--fog-pressure": visibilityPressure,
+              "--fog-opacity": fogOpacity,
+              "--driver-shift": laneShift + "%",
+              "--wheel-turn": wheelTurn + "deg",
+              "--lane-opacity": laneOpacity,
+              "--lane-blur": laneBlur.toFixed(2) + "px",
+              "--fog-blur": fogBlur.toFixed(2) + "px",
+              "--far-fog-opacity": farFogOpacity,
+              "--near-fog-opacity": nearFogOpacity,
+              "--road-fog-opacity": roadFogOpacity,
+            }}
+          >
+            <div className="road-sky">
+              <div className="road-mountain one" />
+              <div className="road-mountain two" />
+            </div>
+            <div className="road-horizon">
+              <span>FOG ZONE</span>
+            </div>
+            <div className="road-surface game-surface first-person-road">
+              <div className="road-depth-shade" />
+              <i className="lane-line left" />
+              <i className="lane-line right" />
+              <div className="driver-lane-focus" style={{ left: getLanePosition(lane, 92) + "%" }}>
+                <span />
+              </div>
+              {obstacles.map((obstacle) => (
+                <div
+                  className={"road-obstacle " + obstacle.type}
+                  key={obstacle.id}
+                  style={getObstacleVisual(obstacle)}
+                ><i /><i /></div>
+              ))}
+            </div>
+            <div className="fog-bank fog-bank-far" aria-hidden="true" />
+            <div className="fog-bank fog-bank-near" aria-hidden="true" />
+            <div className="fog-depth-veil" style={{ opacity: clamp(fogOpacity * 0.98, 0.3, 0.9) }} />
+            <div className="windshield-frame" aria-hidden="true" />
+            <div className="dashboard-cockpit" aria-hidden="true">
+              <div className="dashboard-glow" />
+              <div className="dashboard-gauge">
+                <span>VIS</span>
+                <strong>{formatVisibility(activeVisibility)}</strong>
+              </div>
+              <div className="driver-wheel" />
+            </div>
+            <div className="impact-flash" aria-hidden="true" />
+            <FogField density={clamp(fogOpacity * 0.95 + visibilityPressure * 0.08, 0.35, 0.9)} drift={0.7} />
+            <div className="road-hud driver-hud">
+              <div><span>시정</span><strong>{formatVisibility(activeVisibility)}</strong></div>
+              <div><span>권장속도</span><strong>{recommendedSpeed}km/h</strong></div>
+              <div><span>현재 차선</span><strong>{lane + 1}차선</strong></div>
+              <div><span>반응 여유</span><strong>{reactionLabel}</strong></div>
+              <div><span>남은 기회</span><strong>{"♥".repeat(lives)}{"♡".repeat(3 - lives)}</strong></div>
+            </div>
+            <div className="lane-presence" aria-hidden="true">
+              {[0, 1, 2].map((laneIndex) => (
+                <span className={lane === laneIndex ? "active" : ""} key={laneIndex}>{laneIndex + 1}차선</span>
+              ))}
+            </div>
+            {!running && distance === 0 && (
+              <div className="game-ready">
+                <span>FOG ROAD MISSION</span>
+                <strong>운전석 시야로 안개구간 500m 완주</strong>
+                <p>장애물은 안개 속에서 가까워질수록 선명해집니다. 차선을 미리 판단해보세요.</p>
+              </div>
+            )}
+            <div className={"safety-status " + (won ? "safe" : lives === 0 ? "danger" : "")}>
+              <span>{won ? "CLEAR" : running ? "DRIVING" : lives === 0 ? "FAILED" : "READY"}</span>
+              <strong>{eventText}</strong>
             </div>
           </div>
-          <div className="impact-flash" aria-hidden="true" />
-          <FogField density={fogOpacity} drift={0.7} />
-          <div className="road-hud">
-            <div><span>관측 시정</span><strong>{formatVisibility(activeVisibility)}</strong></div>
-            <div><span>주행 거리</span><strong>{distance} / {targetDistance}m</strong></div>
-            <div><span>남은 기회</span><strong>{"♥".repeat(lives)}{"♡".repeat(3 - lives)}</strong></div>
-          </div>
-          {!running && distance === 0 && (
-            <div className="game-ready">
-              <span>FOG ROAD MISSION</span>
-              <strong>장애물을 피하며 500m 완주</strong>
-              <p>시정이 짧을수록 장애물이 가까워져야 선명하게 보입니다.</p>
+        ) : (
+          <div
+            className={"road-simulator game-road third-person-game " + (running ? "running " : "") + (impact ? "impact" : "")}
+            style={{
+              "--third-fog-pressure": visibilityPressure,
+              "--third-fog-wash": clamp(thirdPersonFogOpacity * 0.72 + visibilityPressure * 0.1, 0.16, 0.82),
+            }}
+          >
+            <div className="road-sky">
+              <div className="road-mountain one" />
+              <div className="road-mountain two" />
             </div>
-          )}
-          <div className={"safety-status " + (won ? "safe" : lives === 0 ? "danger" : "")}>
-            <span>{won ? "CLEAR" : running ? "DRIVING" : lives === 0 ? "FAILED" : "READY"}</span>
-            <strong>{eventText}</strong>
+            <div className="road-surface game-surface third-person-road">
+              <i className="lane-line left" />
+              <i className="lane-line right" />
+              {obstacles.map((obstacle) => (
+                <div
+                  className={"road-obstacle " + obstacle.type}
+                  key={obstacle.id}
+                  style={getThirdPersonObstacleVisual(obstacle)}
+                ><i /><i /></div>
+              ))}
+              <div className="game-car" style={{ left: lanePositions[lane] }}>
+                <i /><i /><span />
+              </div>
+            </div>
+            <div className="impact-flash" aria-hidden="true" />
+            <div className="third-person-fog-wash" aria-hidden="true" />
+            <FogField density={thirdPersonFogOpacity} drift={0.7} />
+            <div className="road-hud">
+              <div><span>관측 시정</span><strong>{formatVisibility(activeVisibility)}</strong></div>
+              <div><span>주행 거리</span><strong>{distance} / {targetDistance}m</strong></div>
+              <div><span>남은 기회</span><strong>{"♥".repeat(lives)}{"♡".repeat(3 - lives)}</strong></div>
+            </div>
+            {!running && distance === 0 && (
+              <div className="game-ready">
+                <span>FOG ROAD MISSION</span>
+                <strong>장애물을 피하며 500m 완주</strong>
+                <p>시정이 짧을수록 장애물이 가까워져야 선명하게 보입니다.</p>
+              </div>
+            )}
+            <div className={"safety-status " + (won ? "safe" : lives === 0 ? "danger" : "")}>
+              <span>{won ? "CLEAR" : running ? "DRIVING" : lives === 0 ? "FAILED" : "READY"}</span>
+              <strong>{eventText}</strong>
+            </div>
           </div>
-        </div>
+        )}
 
         <aside className="mission-controls safety-controls game-controls">
           <div className="control-intro">
             <span>주행 임무</span>
-            <strong>장애물을 피해 500m 완주</strong>
+            <strong>{viewMode === "first" ? "운전석 시야로 500m 완주" : "장애물을 피해 500m 완주"}</strong>
             <p>화면 버튼 또는 키보드 ← → 키로 차선을 바꾸세요.</p>
+          </div>
+
+          <div className="view-mode-toggle" aria-label="주행 시점 선택">
+            <span>시점 선택</span>
+            <div>
+              <button
+                className={viewMode === "first" ? "active" : ""}
+                type="button"
+                aria-pressed={viewMode === "first"}
+                onClick={() => setViewMode("first")}
+              >
+                1인칭
+                <small>운전석 시야</small>
+              </button>
+              <button
+                className={viewMode === "third" ? "active" : ""}
+                type="button"
+                aria-pressed={viewMode === "third"}
+                onClick={() => setViewMode("third")}
+              >
+                3인칭
+                <small>기존 차량 화면</small>
+              </button>
+            </div>
           </div>
 
           <div className="visibility-game-info">
             <span>현재 시정</span>
             <strong>{formatVisibility(activeVisibility)}</strong>
-            <p>{activeVisibility < 500 ? "위험: 장애물이 매우 가까워진 뒤 보입니다." : activeVisibility < 1000 ? "주의: 안개 기준 1 km 미만입니다." : "시정은 비교적 양호하지만 주의가 필요합니다."}</p>
+            <p>{riskLabel}: {activeVisibility < 500 ? "장애물이 매우 가까워진 뒤 선명해집니다." : activeVisibility < 1000 ? "안개 기준 1 km 미만으로 반응 여유가 짧습니다." : "시정은 비교적 양호하지만 전방 주시가 필요합니다."}</p>
           </div>
 
           <div className="lane-controls" aria-label="차선 이동">
@@ -1707,7 +1901,7 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
             </button>
           )}
 
-          {running && <div className="game-live"><i /> 주행 중 · 방향키로 차선 변경</div>}
+          {running && <div className="game-live">주행 중 · 방향키로 차선 변경</div>}
 
           {won && (
             <div className="game-success-card">
@@ -1715,6 +1909,12 @@ function SafetyMission({ visibility, finished, typeCount, safetyScore, onFinish,
               <strong>남은 기회 {lives}개 · 주행 점수 {gameScore}점</strong>
               <p>낮은 시정에서는 속도를 줄이고 차간거리를 늘려야 장애물에 대응할 시간이 확보됩니다.</p>
             </div>
+          )}
+
+          {won && (
+            <button className="game-retry" type="button" onClick={startGame}>
+              다시하기
+            </button>
           )}
 
           <div className="game-safety-tips">
